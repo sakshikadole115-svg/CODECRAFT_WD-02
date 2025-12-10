@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Stopwatch</title>
+<style>
+  :root{
+    --bg:#1b1032;
+    --panel:#2b184a;
+    --accent:#f5c542;
+    --muted:#bdb5c9;
+    --text:#fff;
+    --good:#1ec29a;
+    --bad:#ff6b6b;
+    --glass: rgba(255,255,255,0.03);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:
+    linear-gradient(180deg,#0f0a20 0%, #1b1032 60%);color:var(--text)}
+  .wrap{
+    max-width:980px;margin:32px auto;padding:28px;border-radius:14px;
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);display:grid;grid-template-columns:1fr 360px;gap:20px;
+  }
+
+  /* header/hero */
+  .hero{
+    padding:18px 6px;
+  }
+  h1{margin:0 0 6px;font-size:36px;letter-spacing:-0.02em}
+  p.lead{margin:0 0 18px;color:var(--muted)}
+
+  /* stopwatch display */
+  .display{
+    background: linear-gradient(180deg,#150922,#24113a);
+    padding:28px;border-radius:12px;color:var(--text);
+    display:flex;flex-direction:column;align-items:flex-start;gap:12px;
+  }
+  .time{
+    font-variant-numeric:tabular-nums;
+    font-size:48px;font-weight:700;
+    letter-spacing:0.02em;
+  }
+  .sub{
+    color:var(--muted);font-size:14px;
+  }
+
+  /* buttons */
+  .controls{display:flex;gap:12px;flex-wrap:wrap}
+  button{
+    background:var(--panel);border:0;padding:10px 14px;border-radius:10px;
+    color:var(--text);cursor:pointer;font-weight:600;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    transition: transform .12s ease, background .12s;
+  }
+  button:hover{transform:translateY(-2px)}
+  .btn-accent{background:linear-gradient(90deg,var(--accent),#e6b637);color:#111}
+  .btn-danger{background:linear-gradient(90deg,#ff7b7b,#ff6b6b);color:#111}
+  .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+  .small{padding:8px 10px;font-size:14px;border-radius:8px}
+
+  /* right column */
+  .panel{
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px;
+  }
+  .panel h3{margin:0;font-size:18px}
+  .laps{overflow:auto;max-height:420px;padding:6px;border-radius:8px;background:var(--glass)}
+  .lap{display:flex;justify-content:space-between;padding:10px;border-bottom:1px dashed rgba(255,255,255,0.03);font-weight:600}
+  .lap:last-child{border-bottom:0}
+  .best{color:var(--good)}
+  .worst{color:var(--bad)}
+
+  /* small helpers */
+  .meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px}
+  .export{margin-left:auto}
+  .note{font-size:13px;color:var(--muted);margin-top:8px}
+
+  @media (max-width:900px){
+    .wrap{grid-template-columns:1fr; padding:18px}
+    .display{align-items:center;text-align:center}
+    .panel{order:2}
+  }
+
+</style>
+</head>
+<body>
+
+<div class="wrap" role="application" aria-label="Stopwatch app">
+  <div class="hero">
+    <h1>Stopwatch</h1>
+    <p class="lead">Accurate stopwatch with lap recording. Keyboard: <strong>Space</strong>=Start/Pause, <strong>L</strong>=Lap, <strong>R</strong>=Reset</p>
+
+    <div class="display" id="display">
+      <div class="time" id="time">00:00:00.000</div>
+      <div class="sub" id="status">Stopped</div>
+
+      <div class="controls" aria-hidden="false">
+        <button id="startBtn" class="btn-accent">Start</button>
+        <button id="lapBtn" class="btn-ghost small" disabled>Lap</button>
+        <button id="resetBtn" class="btn-danger small" disabled>Reset</button>
+      </div>
+      <div class="note">Precision: milliseconds · Uses high-resolution clock.</div>
+    </div>
+  </div>
+
+  <aside class="panel" aria-label="Laps and controls">
+    <h3>Laps</h3>
+    <div class="meta">
+      <div id="count">0 laps</div>
+      <div class="export" style="margin-left:auto">
+        <button id="exportBtn" class="small btn-ghost" disabled>Export CSV</button>
+      </div>
+    </div>
+
+    <div class="laps" id="lapsList" aria-live="polite">
+      <!-- laps will appear here -->
+      <div style="padding:14px;color:var(--muted)">No laps yet — press <strong>Lap</strong> to record.</div>
+    </div>
+
+  </aside>
+</div>
+
+<script>
+  // ---------- Stopwatch logic (accurate)
+  let startTime = 0;      // when run started (performance.now)
+  let elapsedBefore = 0;  // elapsed milliseconds before current run (for resume)
+  let running = false;
+  let rafId = null;
+
+  const timeEl = document.getElementById('time');
+  const statusEl = document.getElementById('status');
+  const startBtn = document.getElementById('startBtn');
+  const lapBtn = document.getElementById('lapBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const lapsList = document.getElementById('lapsList');
+  const countEl = document.getElementById('count');
+  const exportBtn = document.getElementById('exportBtn');
+
+  const laps = [];
+
+  function now() { return performance.now(); }
+
+  function format(ms) {
+    // ms -> "MM:SS:msmsms"
+    const total = Math.floor(ms);
+    const milliseconds = total % 1000;
+    const sec = Math.floor(total / 1000) % 60;
+    const min = Math.floor(total / 60000);
+    const mm = String(min).padStart(2,'0');
+    const ss = String(sec).padStart(2,'0');
+    const mss = String(milliseconds).padStart(3,'0');
+    return `${mm}:${ss}:${mss}`;
+  }
+
+  function updateDisplay(displayMs){
+    timeEl.textContent = format(displayMs);
+  }
+
+  function tick(){
+    const current = now();
+    const displayMs = (current - startTime) + elapsedBefore;
+    updateDisplay(displayMs);
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function start(){
+    if (running) return;
+    startTime = now();
+    running = true;
+    statusEl.textContent = 'Running';
+    startBtn.textContent = 'Pause';
+    lapBtn.disabled = false;
+    resetBtn.disabled = false;
+    exportBtn.disabled = laps.length === 0;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function pause(){
+    if (!running) return;
+    cancelAnimationFrame(rafId);
+    const current = now();
+    elapsedBefore += (current - startTime);
+    running = false;
+    statusEl.textContent = 'Paused';
+    startBtn.textContent = 'Resume';
+  }
+
+  function reset(){
+    cancelAnimationFrame(rafId);
+    startTime = 0;
+    elapsedBefore = 0;
+    running = false;
+    laps.length = 0;
+    updateDisplay(0);
+    statusEl.textContent = 'Stopped';
+    startBtn.textContent = 'Start';
+    lapBtn.disabled = true;
+    resetBtn.disabled = true;
+    exportBtn.disabled = true;
+    renderLaps();
+  }
+
+  function getElapsed(){
+    return elapsedBefore + (running ? (now() - startTime) : 0);
+  }
+
+  // lap handling
+  function addLap(){
+    const total = getElapsed();
+    const lapNumber = laps.length + 1;
+    // lap interval = total - previous total
+    const prevTotal = laps.length ? laps[laps.length - 1].total : 0;
+    const interval = total - prevTotal;
+
+    const lap = { number: lapNumber, total, interval };
+    laps.push(lap);
+    renderLaps();
+    exportBtn.disabled = false;
+  }
+
+  function renderLaps(){
+    lapsList.innerHTML = '';
+    if(laps.length === 0){
+      lapsList.innerHTML = '<div style="padding:14px;color:var(--muted)">No laps yet — press <strong>Lap</strong> to record.</div>';
+      countEl.textContent = '0 laps';
+      return;
+    }
+    // find best (smallest) and worst (largest) interval
+    let best = Number.POSITIVE_INFINITY, worst = 0;
+    laps.forEach(l => {
+      if (l.interval < best) best = l.interval;
+      if (l.interval > worst) worst = l.interval;
+    });
+
+    // create items (show newest first)
+    const fragment = document.createDocumentFragment();
+    const reversed = [...laps].reverse();
+    reversed.forEach(l => {
+      const el = document.createElement('div');
+      el.className = 'lap';
+      const left = document.createElement('div');
+      left.innerHTML = `Lap ${l.number}`;
+      const right = document.createElement('div');
+      right.innerHTML = `${format(l.interval)} <span style="color:var(--muted);font-weight:400"> / ${format(l.total)}</span>`;
+      // highlight best/worst
+      if (l.interval === best) right.classList.add('best');
+      if (l.interval === worst) right.classList.add('worst');
+
+      el.appendChild(left);
+      el.appendChild(right);
+      fragment.appendChild(el);
+    });
+
+    lapsList.appendChild(fragment);
+    countEl.textContent = `${laps.length} ${laps.length===1 ? 'lap' : 'laps'}`;
+  }
+
+  // export CSV
+  function exportCSV(){
+    if(laps.length === 0) return;
+    const header = ['Lap','Interval (ms)','Interval','Total (ms)','Total'];
+    const rows = laps.map(l => [l.number, Math.round(l.interval), format(l.interval), Math.round(l.total), format(l.total)]);
+    const all = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([all], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stopwatch_laps_${(new Date()).toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // button events
+  startBtn.addEventListener('click', () => {
+    if (!running) start(); else pause();
+  });
+  lapBtn.addEventListener('click', () => {
+    if (!running) return;
+    addLap();
+  });
+  resetBtn.addEventListener('click', () => {
+    reset();
+  });
+  exportBtn.addEventListener('click', exportCSV);
+
+  // keyboard shortcuts
+  window.addEventListener('keydown', (e) => {
+    // avoid typing in inputs (if any)
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (!running) start(); else pause();
+    } else if (e.key.toLowerCase() === 'l') {
+      if (running) addLap();
+    } else if (e.key.toLowerCase() === 'r') {
+      reset();
+    }
+  });
+
+  // init display
+  updateDisplay(0);
+  statusEl.textContent = 'Stopped';
+
+  // small safeguard: visibility change pause (so timer keeps integrity)
+  document.addEventListener('visibilitychange', () => {
+    // nothing needed because we use performance.now(); but if you want pause on hide:
+    // if (document.hidden && running) pause();
+  });
+
+</script>
+
+</body>
+</html>
